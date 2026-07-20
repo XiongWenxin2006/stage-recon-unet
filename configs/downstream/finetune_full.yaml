@@ -1,0 +1,27 @@
+# Full fine-tune: backbone from stage3, random seg head; train all four.
+# Reconstruction heads stay frozen.
+stage:
+  name: downstream_finetune_full
+  forward_mode: segmentation
+  module_initialization:
+    encoder:
+      source: checkpoint
+      checkpoint_path: ${paths.stage3_checkpoint}
+      source_module: encoder
+      strict: true
+    bottleneck:
+      source: checkpoint
+      checkpoint_path: ${paths.stage3_checkpoint}
+      source_module: bottleneck
+      strict: true
+    decoder:
+      source: checkpoint
+      checkpoint_path: ${paths.stage3_checkpoint}
+      source_module: decoder
+      strict: true
+    segmentation_head: {source: random}
+  trainable_modules: [encoder, bottleneck, decoder, segmentation_head]
+  frozen_modules: [reconstruction_head, bottleneck_reconstruction_head]
+  checkpoint_output: ${paths.checkpoint_dir}/downstream_best.pt
+  loss_name: bce_dice
+  data_task: segmentation

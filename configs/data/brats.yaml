@@ -1,0 +1,20 @@
+# PLACEHOLDER — BraTS is NOT bundled with this repository.
+# Point roots at your local BraTS (or BraTS-style) layout and override as needed:
+#   data.root=... data.image_dir=... data.mask_dir=...
+#
+# Expected fields for LocalSegmentationDataset / local_segmentation:
+#   name, task, in_channels, num_classes, spatial_dims, image_dir/mask_dir (or root)
+
+name: local_segmentation
+task: segmentation
+in_channels: 4          # typical multi-modal MRI; override to match your preprocessing
+num_classes: 4          # override to match label scheme
+spatial_dims: 2         # set 3 for volumetric pipelines
+image_size: null        # optional resize target; user-defined
+normalize: true
+
+# User must override — null means unset (data will not load until provided).
+root: null
+image_dir: null
+mask_dir: null
+manifest: null

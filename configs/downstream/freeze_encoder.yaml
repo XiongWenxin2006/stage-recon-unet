@@ -1,0 +1,26 @@
+# Freeze encoder; fine-tune bottleneck + decoder + segmentation head from stage3.
+stage:
+  name: downstream_freeze_encoder
+  forward_mode: segmentation
+  module_initialization:
+    encoder:
+      source: checkpoint
+      checkpoint_path: ${paths.stage3_checkpoint}
+      source_module: encoder
+      strict: true
+    bottleneck:
+      source: checkpoint
+      checkpoint_path: ${paths.stage3_checkpoint}
+      source_module: bottleneck
+      strict: true
+    decoder:
+      source: checkpoint
+      checkpoint_path: ${paths.stage3_checkpoint}
+      source_module: decoder
+      strict: true
+    segmentation_head: {source: random}
+  trainable_modules: [bottleneck, decoder, segmentation_head]
+  frozen_modules: [encoder, reconstruction_head, bottleneck_reconstruction_head]
+  checkpoint_output: ${paths.checkpoint_dir}/downstream_best.pt
+  loss_name: bce_dice
+  data_task: segmentation

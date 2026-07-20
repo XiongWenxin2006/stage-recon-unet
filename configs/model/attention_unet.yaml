@@ -1,0 +1,21 @@
+name: attention_unet
+in_channels: ${data.in_channels}
+out_channels: ${data.in_channels}
+num_classes: ${data.num_classes}
+spatial_dims: ${data.spatial_dims}
+norm: batch
+activation: relu
+encoder:
+  name: unet
+  channels: [32, 64, 128, 256]
+bottleneck:
+  name: conv
+decoder:
+  name: attention
+heads:
+  bottleneck_reconstruction:
+    name: bottleneck_reconstruction
+  reconstruction:
+    name: image_reconstruction
+  segmentation:
+    name: segmentation

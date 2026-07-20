@@ -1,0 +1,11 @@
+type: webdataset
+# User must set local shard paths/patterns, e.g.:
+#   data_source.shards=/data/shards/train-{000000..000009}.tar
+shards: null
+batch_size: 4
+num_workers: 2
+shard_shuffle: true
+sample_shuffle: 1000
+cache_dir: null
+steps_per_epoch: 100
+val_steps: 20

@@ -1,0 +1,31 @@
+# @package _global_
+# Downstream-only baseline: all modules randomly initialized (no pretraining).
+defaults:
+  - /base
+  - /data: synthetic
+  - /data_source: local
+  - /model: unet
+  - _self_
+
+experiment:
+  name: random_init_baseline
+  type: staged_pipeline
+  stages: [downstream]
+
+data:
+  task: segmentation
+
+stages:
+  downstream:
+    name: downstream_random_init
+    forward_mode: segmentation
+    module_initialization:
+      encoder: {source: random}
+      bottleneck: {source: random}
+      decoder: {source: random}
+      segmentation_head: {source: random}
+    trainable_modules: [encoder, bottleneck, decoder, segmentation_head]
+    frozen_modules: [reconstruction_head, bottleneck_reconstruction_head]
+    checkpoint_output: ${paths.checkpoint_dir}/downstream_best.pt
+    loss_name: bce_dice
+    data_task: segmentation

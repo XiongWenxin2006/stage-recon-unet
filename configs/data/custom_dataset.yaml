@@ -1,0 +1,24 @@
+# PLACEHOLDER — custom local dataset template (data is NOT bundled).
+# Copy or override this config for your own folder layout.
+#
+# For reconstruction: use name=local_reconstruction with root or image_dir.
+# For segmentation: use name=local_segmentation with image_dir + mask_dir
+#   (or a manifest / pairs list).
+#
+# Expected fields to set before training:
+#   name, task, in_channels, num_classes, spatial_dims, and path roots.
+
+name: local_segmentation
+task: segmentation
+in_channels: 1
+num_classes: 1
+spatial_dims: 2
+image_size: null
+normalize: false
+
+# User must override — null means unset (data will not load until provided).
+root: null
+image_dir: null
+mask_dir: null
+manifest: null
+pairs: null

@@ -1,0 +1,19 @@
+# PLACEHOLDER — ISIC is NOT bundled with this repository.
+# Point roots at your local ISIC (or ISIC-style) image/mask folders:
+#   data.image_dir=/path/to/images data.mask_dir=/path/to/masks
+#
+# Expected fields: name, task, in_channels, num_classes, paths/channels.
+
+name: local_segmentation
+task: segmentation
+in_channels: 3          # RGB dermoscopic images
+num_classes: 1          # binary lesion mask by default; override if multi-class
+spatial_dims: 2
+image_size: null
+normalize: true
+
+# User must override — null means unset (data will not load until provided).
+root: null
+image_dir: null
+mask_dir: null
+manifest: null

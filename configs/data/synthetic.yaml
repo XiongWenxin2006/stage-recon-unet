@@ -1,0 +1,20 @@
+name: synthetic
+task: reconstruction  # overridden per stage via data_task / experiment overrides
+in_channels: 1
+num_classes: 1
+image_size: 64
+num_samples: 32
+spatial_dims: 2
+normalize: false
+seed: ${seed}
+transforms:
+  reconstruction:
+    corruptions:
+      - name: gaussian_noise
+        std: 0.1
+      - name: random_patch_mask
+        num_patches: 4
+        patch_size: 8
+      - name: local_pixel_shuffle
+        patch_size: 8
+    apply_prob: 1.0

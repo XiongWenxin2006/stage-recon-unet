@@ -1,0 +1,6 @@
+type: local
+batch_size: 4
+num_workers: 0
+pin_memory: false
+shuffle: true
+drop_last: false

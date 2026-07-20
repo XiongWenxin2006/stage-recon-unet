@@ -1,0 +1,28 @@
+# Reusable Stage-3 snippet: encoder from s1, bottleneck+decoder from s2, recon head random.
+# Trainable: encoder, bottleneck, decoder, reconstruction_head.
+# Prefer inlining under experiments.*.stages.stage3 for Hydra composition.
+stage:
+  name: stage3_full_reconstruction
+  forward_mode: reconstruction
+  module_initialization:
+    encoder:
+      source: checkpoint
+      checkpoint_path: ${paths.stage1_checkpoint}
+      source_module: encoder
+      strict: true
+    bottleneck:
+      source: checkpoint
+      checkpoint_path: ${paths.stage2_checkpoint}
+      source_module: bottleneck
+      strict: true
+    decoder:
+      source: checkpoint
+      checkpoint_path: ${paths.stage2_checkpoint}
+      source_module: decoder
+      strict: true
+    reconstruction_head: {source: random}
+  trainable_modules: [encoder, bottleneck, decoder, reconstruction_head]
+  frozen_modules: [segmentation_head, bottleneck_reconstruction_head]
+  checkpoint_output: ${paths.stage3_checkpoint}
+  loss_name: mse
+  data_task: reconstruction
