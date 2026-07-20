@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, MutableMapping
+from collections.abc import Mapping, MutableMapping
+from typing import Any
 
 from stagerecon.models.bottlenecks import build_bottleneck
 from stagerecon.models.composed.modular_unet import ModularUNet

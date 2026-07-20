@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 # Repository root (parent of scripts/)
 ROOT = Path(__file__).resolve().parents[1]

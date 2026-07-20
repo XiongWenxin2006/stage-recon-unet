@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -117,42 +118,41 @@ class CheckpointManager:
         return obj
 
     @classmethod
+    def _is_module_wise_map(cls, module_map: Mapping[str, Any]) -> bool:
+        """True if ``module_map`` maps module names → state_dicts."""
+        if not module_map:
+            return False
+        if not all(isinstance(v, Mapping) for v in module_map.values()):
+            return False
+        # Monolithic flat state_dicts have dotted keys at the top level.
+        if any("." in str(k) for k in module_map):
+            return False
+        return True
+
+    @classmethod
     def extract_modules_dict(cls, checkpoint: Mapping[str, Any]) -> dict[str, Any]:
         """Return the per-module state dict mapping from a checkpoint payload."""
         for key in ("model", "modules"):
-            if key in checkpoint and isinstance(checkpoint[key], Mapping):
-                module_map = dict(checkpoint[key])
-                # Module-wise: values are state_dicts (mappings of tensors/params).
-                # Reject a monolithic flat state_dict (keys look like 'encoder.0.weight').
-                if module_map and all(isinstance(v, Mapping) for v in module_map.values()):
-                    if set(module_map.keys()) & set(KNOWN_MODULES):
-                        return module_map
-                    # Still accept if nested mappings look like state_dicts.
-                    sample_val = next(iter(module_map.values()))
-                    if sample_val and not any("." in str(k) for k in list(sample_val.keys())[:3]):
-                        # Heuristic unused; accept nested module maps broadly.
-                        pass
-                    if any(k in KNOWN_MODULES for k in module_map):
-                        return module_map
-                    # Accept any dict-of-dicts under model/modules if keys are module-like
-                    # (no dotted parameter paths at top level).
-                    if not any("." in str(k) for k in module_map):
-                        return module_map
-                raise ValueError(
-                    f"Checkpoint key '{key}' looks like a monolithic state_dict, "
-                    "not a per-module mapping. Refusing blind full-model load. "
-                    "Use module-wise checkpoints from CheckpointManager.save()."
-                )
+            if key not in checkpoint or not isinstance(checkpoint[key], Mapping):
+                continue
+            module_map = dict(checkpoint[key])
+            if cls._is_module_wise_map(module_map):
+                return module_map
+            raise ValueError(
+                f"Checkpoint key '{key}' looks like a monolithic state_dict, "
+                "not a per-module mapping. Refusing blind full-model load. "
+                "Use module-wise checkpoints from CheckpointManager.save()."
+            )
         if "state_dict" in checkpoint:
             raise ValueError(
                 "Checkpoint contains a full 'state_dict' but no per-module "
                 "'model'/'modules' mapping. Refusing to load blindly for stage init."
             )
         # Allow a bare {module_name: state_dict} mapping.
-        if all(isinstance(v, Mapping) for v in checkpoint.values()):
-            keys = set(checkpoint.keys())
-            if keys & set(KNOWN_MODULES):
-                return dict(checkpoint)
+        if cls._is_module_wise_map(checkpoint) and (
+            set(checkpoint.keys()) & set(KNOWN_MODULES)
+        ):
+            return dict(checkpoint)
         raise ValueError(
             "Unrecognized checkpoint format: expected a top-level 'model' or "
             "'modules' dict mapping module names to state_dicts."
@@ -238,12 +238,6 @@ class CheckpointManager:
                 module_names=[module_name],
                 strict=spec.strict,
                 source_module_map=source_map,
-            )
-            src = spec.source_module or module_name
-            logger.info(
-                "Loaded %s from %s",
-                module_name if src == module_name else f"{module_name} (from {src})",
-                Path(spec.checkpoint_path).name,
             )
 
     def load_training_state(

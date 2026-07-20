@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Callable, Literal, Type
+from collections.abc import Callable
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -11,7 +12,7 @@ NormType = Literal["batch", "instance", "group", "none"]
 ActivationType = Literal["relu", "leaky_relu", "gelu", "silu"]
 
 
-def get_conv_nd(dim: int) -> Type[nn.Module]:
+def get_conv_nd(dim: int) -> type[nn.Module]:
     """Return the Conv module class for the given spatial dimensionality.
 
     Args:

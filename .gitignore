@@ -216,3 +216,31 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project-specific
+outputs/*
+!outputs/.gitkeep
+checkpoints/
+data/
+datasets/
+*.pt
+*.pth
+*.ckpt
+.hydra/
+multirun/
+wandb/
+mlruns/
+*.tar
+shards/
+cache/
+.cache/
+*.npy
+!tests/**/*.npy
+.env
+.env.*
+credentials*
+*.pem
+.DS_Store
+.idea/
+.vscode/
+*.egg-info/

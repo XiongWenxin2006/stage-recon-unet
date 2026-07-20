@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from stagerecon.experiments.config_access import (
     extract_stage_cfg,

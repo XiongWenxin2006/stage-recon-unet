@@ -14,8 +14,9 @@ enforced by the experiment runner / stage before ``fit``::
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any
 
 import torch
 import torch.nn as nn

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from stagerecon.experiments.config_access import (
     get_checkpoint_dir,
@@ -13,7 +14,6 @@ from stagerecon.experiments.config_access import (
     get_dataloader_cfg,
     get_model_cfg,
     get_output_dir,
-    get_trainer_cfg,
     normalize_stage_name,
     resolve_stages_list,
     to_plain,

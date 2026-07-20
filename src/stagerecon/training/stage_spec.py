@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping, MutableMapping
+from typing import Any
 
 
 def _to_plain_dict(cfg: Any) -> dict[str, Any]:

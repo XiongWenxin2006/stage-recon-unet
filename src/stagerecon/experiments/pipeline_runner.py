@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from stagerecon.data import build_dataloader, build_dataset
 from stagerecon.experiments.config_access import (

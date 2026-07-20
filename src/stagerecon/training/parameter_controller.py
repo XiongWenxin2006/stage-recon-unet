@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
+from typing import Any
 
 import torch
 import torch.nn as nn

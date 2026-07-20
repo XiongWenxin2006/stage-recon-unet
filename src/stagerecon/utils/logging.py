@@ -5,13 +5,12 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, Union
 
 
 def setup_logger(
     name: str = "stagerecon",
-    level: Union[int, str] = logging.INFO,
-    log_file: Optional[str | Path] = None,
+    level: int | str = logging.INFO,
+    log_file: str | Path | None = None,
     *,
     fmt: str = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     datefmt: str = "%Y-%m-%d %H:%M:%S",
