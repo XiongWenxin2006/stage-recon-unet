@@ -76,8 +76,11 @@ class CheckpointManager:
         out_path = self.resolve_path(path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
+        module_states = self.collect_module_state_dicts(model)
         payload: dict[str, Any] = {
-            "modules": self.collect_module_state_dicts(model),
+            # Primary key per project spec; ``modules`` kept as alias for loaders.
+            "model": module_states,
+            "modules": module_states,
             "stage": stage,
             "epoch": epoch,
             "best_metric": best_metric,
@@ -96,7 +99,7 @@ class CheckpointManager:
         logger.info(
             "Saved module-wise checkpoint to %s (modules=%s)",
             out_path,
-            sorted(payload["modules"].keys()),
+            sorted(module_states.keys()),
         )
         return out_path
 
@@ -116,14 +119,34 @@ class CheckpointManager:
     @classmethod
     def extract_modules_dict(cls, checkpoint: Mapping[str, Any]) -> dict[str, Any]:
         """Return the per-module state dict mapping from a checkpoint payload."""
-        if "modules" in checkpoint and isinstance(checkpoint["modules"], Mapping):
-            return dict(checkpoint["modules"])
-        # Reject monolithic model state_dict for stage initialization.
-        if "model" in checkpoint or "state_dict" in checkpoint:
+        for key in ("model", "modules"):
+            if key in checkpoint and isinstance(checkpoint[key], Mapping):
+                module_map = dict(checkpoint[key])
+                # Module-wise: values are state_dicts (mappings of tensors/params).
+                # Reject a monolithic flat state_dict (keys look like 'encoder.0.weight').
+                if module_map and all(isinstance(v, Mapping) for v in module_map.values()):
+                    if set(module_map.keys()) & set(KNOWN_MODULES):
+                        return module_map
+                    # Still accept if nested mappings look like state_dicts.
+                    sample_val = next(iter(module_map.values()))
+                    if sample_val and not any("." in str(k) for k in list(sample_val.keys())[:3]):
+                        # Heuristic unused; accept nested module maps broadly.
+                        pass
+                    if any(k in KNOWN_MODULES for k in module_map):
+                        return module_map
+                    # Accept any dict-of-dicts under model/modules if keys are module-like
+                    # (no dotted parameter paths at top level).
+                    if not any("." in str(k) for k in module_map):
+                        return module_map
+                raise ValueError(
+                    f"Checkpoint key '{key}' looks like a monolithic state_dict, "
+                    "not a per-module mapping. Refusing blind full-model load. "
+                    "Use module-wise checkpoints from CheckpointManager.save()."
+                )
+        if "state_dict" in checkpoint:
             raise ValueError(
-                "Checkpoint contains a full model state_dict ('model'/'state_dict') "
-                "but no 'modules' mapping. Refusing to load blindly for stage init. "
-                "Use module-wise checkpoints produced by CheckpointManager.save()."
+                "Checkpoint contains a full 'state_dict' but no per-module "
+                "'model'/'modules' mapping. Refusing to load blindly for stage init."
             )
         # Allow a bare {module_name: state_dict} mapping.
         if all(isinstance(v, Mapping) for v in checkpoint.values()):
@@ -131,8 +154,8 @@ class CheckpointManager:
             if keys & set(KNOWN_MODULES):
                 return dict(checkpoint)
         raise ValueError(
-            "Unrecognized checkpoint format: expected a top-level 'modules' dict "
-            "mapping module names to state_dicts."
+            "Unrecognized checkpoint format: expected a top-level 'model' or "
+            "'modules' dict mapping module names to state_dicts."
         )
 
     def load_modules(
@@ -196,10 +219,7 @@ class CheckpointManager:
                 spec = ModuleInitializationSpec.from_config(spec_raw)
 
             if spec.source == "random":
-                logger.info(
-                    "Keeping random / existing initialization for module '%s'",
-                    module_name,
-                )
+                logger.info("Randomly initialized %s", module_name)
                 continue
 
             if not spec.checkpoint_path:
