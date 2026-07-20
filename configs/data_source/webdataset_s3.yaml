@@ -1,0 +1,16 @@
+type: webdataset
+# PLACEHOLDER — no credentials or real buckets are provided.
+# Set shards to an s3:// pattern or a pipe: command that streams tars, e.g.:
+#   data_source.shards='s3://YOUR_BUCKET/shards/train-{000000..000009}.tar'
+#   data_source.shards='pipe:aws s3 cp s3://YOUR_BUCKET/shards/train-{000000..000009}.tar -'
+#
+# Configure AWS credentials via the environment / shared config outside Hydra
+# (AWS_PROFILE, AWS_ACCESS_KEY_ID, etc.). Do not put secrets in YAML.
+shards: null
+batch_size: 4
+num_workers: 2
+shard_shuffle: true
+sample_shuffle: 1000
+cache_dir: null
+steps_per_epoch: 100
+val_steps: 20

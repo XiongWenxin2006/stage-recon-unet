@@ -1,0 +1,31 @@
+# Linear probe: freeze encoder, bottleneck, decoder; train only segmentation_head.
+stage:
+  name: downstream_linear_probe
+  forward_mode: segmentation
+  module_initialization:
+    encoder:
+      source: checkpoint
+      checkpoint_path: ${paths.stage3_checkpoint}
+      source_module: encoder
+      strict: true
+    bottleneck:
+      source: checkpoint
+      checkpoint_path: ${paths.stage3_checkpoint}
+      source_module: bottleneck
+      strict: true
+    decoder:
+      source: checkpoint
+      checkpoint_path: ${paths.stage3_checkpoint}
+      source_module: decoder
+      strict: true
+    segmentation_head: {source: random}
+  trainable_modules: [segmentation_head]
+  frozen_modules:
+    - encoder
+    - bottleneck
+    - decoder
+    - reconstruction_head
+    - bottleneck_reconstruction_head
+  checkpoint_output: ${paths.checkpoint_dir}/downstream_best.pt
+  loss_name: bce_dice
+  data_task: segmentation

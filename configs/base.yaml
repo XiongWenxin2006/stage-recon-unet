@@ -1,0 +1,47 @@
+seed: 42
+device: cpu
+amp: false
+deterministic: false
+
+paths:
+  output_dir: outputs/${experiment.name}
+  checkpoint_dir: ${paths.output_dir}/checkpoints
+  stage1_checkpoint: ${paths.checkpoint_dir}/stage1_best.pt
+  stage2_checkpoint: ${paths.checkpoint_dir}/stage2_best.pt
+  stage3_checkpoint: ${paths.checkpoint_dir}/stage3_best.pt
+  log_dir: ${paths.output_dir}/logs
+
+trainer:
+  max_epochs: 2
+  steps_per_epoch: null
+  val_steps: null
+  grad_clip_norm: 1.0
+  grad_accumulation_steps: 1
+  amp: ${amp}
+  log_every: 1
+  early_stopping:
+    enabled: false
+    patience: 5
+    metric: val_loss
+    mode: min
+
+optimizer:
+  name: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+
+scheduler:
+  name: cosine
+  warmup_epochs: 0
+
+checkpoint:
+  save_best: true
+  save_last: true
+  monitor: val_loss
+  mode: min
+
+logging:
+  level: INFO
+
+experiment:
+  name: default

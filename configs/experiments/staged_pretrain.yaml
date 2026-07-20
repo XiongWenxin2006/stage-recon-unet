@@ -1,0 +1,95 @@
+# @package _global_
+# Full three-stage reconstruction pretrain, then downstream fine-tune.
+defaults:
+  - /base
+  - /data: synthetic
+  - /data_source: local
+  - /model: unet
+  - _self_
+
+experiment:
+  name: staged_pretrain
+  type: staged_pipeline
+  stages: [stage1, stage2, stage3, downstream]
+
+stages:
+  stage1:
+    name: stage1_encoder_reconstruction
+    forward_mode: reconstruction
+    module_initialization:
+      encoder: {source: random}
+      bottleneck: {source: random}
+      decoder: {source: random}
+      reconstruction_head: {source: random}
+    trainable_modules: [encoder, bottleneck, decoder, reconstruction_head]
+    frozen_modules: [segmentation_head, bottleneck_reconstruction_head]
+    checkpoint_output: ${paths.stage1_checkpoint}
+    loss_name: mse
+    data_task: reconstruction
+  stage2:
+    name: stage2_bottleneck_decoder
+    forward_mode: reconstruction
+    module_initialization:
+      encoder: {source: random}
+      bottleneck:
+        source: checkpoint
+        checkpoint_path: ${paths.stage1_checkpoint}
+        source_module: bottleneck
+        strict: true
+      decoder: {source: random}
+      reconstruction_head: {source: random}
+    trainable_modules: [bottleneck, decoder, reconstruction_head]
+    frozen_modules: [encoder, segmentation_head, bottleneck_reconstruction_head]
+    checkpoint_output: ${paths.stage2_checkpoint}
+    loss_name: mse
+    data_task: reconstruction
+  stage3:
+    name: stage3_full_reconstruction
+    forward_mode: reconstruction
+    module_initialization:
+      encoder:
+        source: checkpoint
+        checkpoint_path: ${paths.stage1_checkpoint}
+        source_module: encoder
+        strict: true
+      bottleneck:
+        source: checkpoint
+        checkpoint_path: ${paths.stage2_checkpoint}
+        source_module: bottleneck
+        strict: true
+      decoder:
+        source: checkpoint
+        checkpoint_path: ${paths.stage2_checkpoint}
+        source_module: decoder
+        strict: true
+      reconstruction_head: {source: random}
+    trainable_modules: [encoder, bottleneck, decoder, reconstruction_head]
+    frozen_modules: [segmentation_head, bottleneck_reconstruction_head]
+    checkpoint_output: ${paths.stage3_checkpoint}
+    loss_name: mse
+    data_task: reconstruction
+  downstream:
+    name: downstream_finetune_full
+    forward_mode: segmentation
+    module_initialization:
+      encoder:
+        source: checkpoint
+        checkpoint_path: ${paths.stage3_checkpoint}
+        source_module: encoder
+        strict: true
+      bottleneck:
+        source: checkpoint
+        checkpoint_path: ${paths.stage3_checkpoint}
+        source_module: bottleneck
+        strict: true
+      decoder:
+        source: checkpoint
+        checkpoint_path: ${paths.stage3_checkpoint}
+        source_module: decoder
+        strict: true
+      segmentation_head: {source: random}
+    trainable_modules: [encoder, bottleneck, decoder, segmentation_head]
+    frozen_modules: [reconstruction_head, bottleneck_reconstruction_head]
+    checkpoint_output: ${paths.checkpoint_dir}/downstream_best.pt
+    loss_name: bce_dice
+    data_task: segmentation
