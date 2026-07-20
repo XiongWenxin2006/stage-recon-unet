@@ -216,6 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+<<<<<<< HEAD
 
 # Project-specific
 outputs/*
@@ -244,3 +245,5 @@ credentials*
 .idea/
 .vscode/
 *.egg-info/
+=======
+>>>>>>> c75fbf5a36f1aa2552ea2ad4579987819b700b15

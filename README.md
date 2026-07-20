@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # StageRecon U-Net
 
 基于**分阶段自监督图像重建预训练**的模块化 U-Net 医学图像分割研究框架。
@@ -350,3 +351,6 @@ HD95：
 ## 许可证
 
 MIT — 见 [LICENSE](LICENSE)。
+=======
+# stage-recon-unet
+>>>>>>> c75fbf5a36f1aa2552ea2ad4579987819b700b15
