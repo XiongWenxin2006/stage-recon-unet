@@ -1,16 +1,47 @@
 type: webdataset
-# PLACEHOLDER — no credentials or real buckets are provided.
-# Set shards to an s3:// pattern or a pipe: command that streams tars, e.g.:
-#   data_source.shards='s3://YOUR_BUCKET/shards/train-{000000..000009}.tar'
-#   data_source.shards='pipe:aws s3 cp s3://YOUR_BUCKET/shards/train-{000000..000009}.tar -'
+# Remote S3 TAR shard streaming.
 #
-# Configure AWS credentials via the environment / shared config outside Hydra
-# (AWS_PROFILE, AWS_ACCESS_KEY_ID, etc.). Do not put secrets in YAML.
+# IMPORTANT: Never put cloud credentials in this YAML.
+# Configure AWS via environment variables / shared config / IAM role, e.g.:
+#   export AWS_PROFILE=my-profile
+#   export AWS_DEFAULT_REGION=us-east-1
+#
+# Example overrides:
+#   data_source=webdataset_s3 \
+#   data_source.shards='s3://YOUR_BUCKET/shards/train/train-{000000..000009}.tar'
+#
+# By default s3:// URLs are rewritten to:
+#   pipe:aws s3 cp 's3://...' -
+# Set s3_transport=raw only if you installed a custom gopen S3 handler.
+#
+# Alternative pipe form (already rewritten, no further rewrite needed):
+#   data_source.shards='pipe:aws s3 cp s3://YOUR_BUCKET/shards/train/train-000000.tar -'
+#
+# Split map example:
+#   data_source.shards.train='s3://BUCKET/train/train-{000000..000099}.tar'
+#   data_source.shards.val='s3://BUCKET/val/val-{000000..000009}.tar'
+
+name: webdataset
 shards: null
+
 batch_size: 4
 num_workers: 2
+pin_memory: false
+drop_last: false
+
 shard_shuffle: true
 sample_shuffle: 1000
+
+# Recommended when repeatedly streaming the same remote shards
 cache_dir: null
+
 steps_per_epoch: 100
 val_steps: 20
+
+handler: warn_and_continue
+resampled: true
+
+rewrite_remote: true
+s3_transport: pipe_aws   # pipe_aws | pipe_rclone | raw
+gs_transport: pipe_gsutil
+http_transport: raw

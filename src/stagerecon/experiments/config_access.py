@@ -271,26 +271,77 @@ def get_model_cfg(cfg: Any) -> Any:
     return cfg
 
 
+def _is_streaming_source(source: Mapping[str, Any]) -> bool:
+    """Return True when a data_source section selects WebDataset streaming."""
+    type_name = str(
+        source.get("type", source.get("name", source.get("backend", "")))
+    ).lower()
+    return type_name in {
+        "webdataset",
+        "wds",
+        "streaming",
+        "webdataset_local",
+        "webdataset_s3",
+        "webdataset_http",
+    }
+
+
+def merge_data_and_source(
+    data: Mapping[str, Any] | None,
+    data_source: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Merge semantic ``data`` config with transport ``data_source`` config.
+
+    ``data`` owns dataset semantics (channels, size, transforms, labels).
+    ``data_source`` owns where/how samples are read (local paths, WebDataset
+    shards, batch size, shuffle buffers, cache, steps_per_epoch).
+
+    When ``data_source.type`` is a WebDataset backend, the merged config sets
+    ``name=webdataset`` so :func:`stagerecon.data.build_dataset` routes to the
+    streaming factory.
+    """
+    merged: dict[str, Any] = {}
+    if data:
+        merged.update(dict(data))
+    if data_source:
+        source = dict(data_source)
+        merged.update(source)
+        if _is_streaming_source(source):
+            merged["name"] = "webdataset"
+            merged.setdefault("type", "webdataset")
+            # Preserve semantic dataset name for logging when present.
+            if data and data.get("name") and data.get("name") != "webdataset":
+                merged.setdefault("dataset_name", data.get("name"))
+    return merged
+
+
 def get_data_cfg(
     cfg: Any,
     *,
     split: str | None = None,
     task: str | None = None,
 ) -> dict[str, Any]:
-    """Fetch data / data_source config, optionally selecting a split + task."""
+    """Fetch merged data + data_source config, optionally selecting split/task."""
     root = to_plain(cfg)
-    data = get_section(root, "data", "data_source", "dataset")
-    if not data:
+    data = get_section(root, "data", "dataset")
+    data_source = get_section(root, "data_source")
+    merged = merge_data_and_source(data, data_source)
+    if not merged:
+        # Fall back to a lone data_source-as-data layout.
+        merged = get_section(root, "data_source")
+    if not merged:
         return {}
 
-    # Nested split sections: data.train / data.val
+    data = dict(merged)
+
+    # Nested split sections: data.train / data.val / data_source.splits.train
     if split is not None:
         split_key = str(split).lower()
+        data["split"] = split_key
         for key in (split_key, f"{split_key}_data"):
             if key in data and isinstance(data[key], Mapping):
                 data = {**data, **to_plain(data[key])}
                 break
-        # Common pattern: data.splits.train
         splits = data.get("splits")
         if isinstance(splits, Mapping) and split_key in splits:
             nested = to_plain(splits[split_key])
@@ -302,13 +353,11 @@ def get_data_cfg(
         data.setdefault("mode", task)
         if task in {"segmentation", "seg"}:
             data["return_mask"] = True
-            # Prefer task-specific transform subtree when present
             transforms = data.get("transforms")
             if isinstance(transforms, Mapping):
                 if "segmentation" in transforms:
                     data["transforms"] = transforms["segmentation"]
                 elif "reconstruction" in transforms and "segmentation" not in transforms:
-                    # Avoid feeding recon corruption specs into seg factory
                     data["transforms"] = None
         elif task in {"reconstruction", "recon", "pretrain"}:
             data["return_mask"] = False
@@ -328,15 +377,25 @@ def get_dataloader_cfg(cfg: Any, *, split: str = "train") -> dict[str, Any]:
     for key in (f"{split}_dataloader", f"dataloader_{split}"):
         if key in root and isinstance(root[key], Mapping):
             loader = {**loader, **to_plain(root[key])}
-    # Pull common keys from trainer / data if missing
-    data = get_section(root, "data", "data_source")
+    # Pull common keys from trainer / merged data+data_source if missing
+    data = merge_data_and_source(
+        get_section(root, "data", "dataset"),
+        get_section(root, "data_source"),
+    )
     for key in ("batch_size", "num_workers", "pin_memory", "drop_last"):
         if key not in loader:
             if key in trainer:
                 loader[key] = trainer[key]
             elif key in data:
                 loader[key] = data[key]
-    if split == "train":
+    # Iterable / WebDataset sources must not shuffle at DataLoader level.
+    if _is_streaming_source(data) or str(data.get("name", "")).lower() in {
+        "webdataset",
+        "wds",
+        "streaming",
+    }:
+        loader["shuffle"] = False
+    elif split == "train":
         loader.setdefault("shuffle", True)
     else:
         loader.setdefault("shuffle", False)

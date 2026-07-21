@@ -1,0 +1,32 @@
+type: webdataset
+# HTTP(S) TAR shard streaming.
+#
+# Example:
+#   data_source=webdataset_http \
+#   data_source.shards='https://example.com/shards/train-{000000..000009}.tar'
+#
+# Optional curl pipe transport:
+#   data_source.http_transport=pipe_curl
+
+name: webdataset
+shards: null
+
+batch_size: 4
+num_workers: 2
+pin_memory: false
+drop_last: false
+
+shard_shuffle: true
+sample_shuffle: 1000
+cache_dir: null
+
+steps_per_epoch: 100
+val_steps: 20
+
+handler: warn_and_continue
+resampled: true
+
+rewrite_remote: true
+http_transport: raw   # raw | pipe_curl
+s3_transport: pipe_aws
+gs_transport: pipe_gsutil

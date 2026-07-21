@@ -220,8 +220,19 @@ def run_stage(
         "output_dir": str(get_output_dir(cfg)),
         "seed": seed if seed is not None else root.get("seed"),
     }
+    # Streaming sources often define epoch length on data_source, not trainer.
+    data_for_steps = get_data_cfg(cfg, split="train", task=task)
+    if fit_cfg.get("steps_per_epoch") is None and data_for_steps.get("steps_per_epoch") is not None:
+        fit_cfg["steps_per_epoch"] = int(data_for_steps["steps_per_epoch"])
+    if (
+        fit_cfg.get("val_steps") is None
+        and data_for_steps.get("val_steps", data_for_steps.get("validation_steps")) is not None
+    ):
+        fit_cfg["val_steps"] = int(
+            data_for_steps.get("val_steps", data_for_steps.get("validation_steps"))
+        )
     # Prefer stage-local epoch overrides
-    for key in ("epochs", "steps_per_epoch", "amp", "grad_clip", "monitor"):
+    for key in ("epochs", "steps_per_epoch", "amp", "grad_clip", "monitor", "val_steps"):
         if key in stage_cfg and stage_cfg[key] is not None:
             fit_cfg[key] = stage_cfg[key]
 

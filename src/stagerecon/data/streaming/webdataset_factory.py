@@ -1,7 +1,14 @@
-"""Factory for WebDataset-based streaming reconstruction / segmentation data."""
+"""Factory for WebDataset-based streaming reconstruction / segmentation data.
+
+Supports local TAR shards, S3/GCS via ``pipe:`` rewriting, HTTP(S) URLs,
+shard/sample shuffle buffers, optional disk cache, and fixed epoch lengths
+via ``steps_per_epoch`` / ``with_epoch`` so trainers need not call ``len(dataset)``.
+"""
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping
 
 from torch.utils.data import IterableDataset
@@ -9,6 +16,8 @@ from torch.utils.data import IterableDataset
 from stagerecon.data.streaming.error_handlers import warn_and_continue
 from stagerecon.data.streaming.sample_decoders import decode_sample_fields
 from stagerecon.data.streaming.shard_url_builder import build_shard_urls
+
+logger = logging.getLogger(__name__)
 
 
 def _to_plain_dict(cfg: Any) -> dict[str, Any]:
@@ -56,6 +65,9 @@ def _map_to_task_sample(
         if "image" not in decoded:
             raise KeyError("Reconstruction sample is missing 'image'")
         image = decoded["image"]
+        # Prefer an explicit clean target when present; otherwise use the image.
+        # Online corruptions are applied later by reconstruction transforms so
+        # the clean tensor is preserved as ``target``.
         target = decoded.get("target", image)
         return {
             "image": image,
@@ -95,23 +107,119 @@ class _MappedIterableDataset(IterableDataset):
         return int(self._length)
 
 
+def _resolve_handler(plain: Mapping[str, Any]) -> Callable[[BaseException], bool]:
+    handler_name = str(plain.get("handler", "warn_and_continue")).lower()
+    if handler_name in {"warn_and_continue", "warn", "continue"}:
+        return warn_and_continue
+    if handler_name in {"reraise", "raise", "strict"}:
+        from stagerecon.data.streaming.error_handlers import reraise
+
+        return reraise
+    if callable(plain.get("handler")):
+        return plain["handler"]  # type: ignore[return-value]
+    raise KeyError(f"Unknown handler '{handler_name}'")
+
+
+def _resolve_nodesplitter(wds: Any, nodesplitter_cfg: Any) -> Any | None:
+    if nodesplitter_cfg is None or nodesplitter_cfg is False:
+        return None
+    if callable(nodesplitter_cfg):
+        return nodesplitter_cfg
+    if nodesplitter_cfg is True or (
+        isinstance(nodesplitter_cfg, str)
+        and nodesplitter_cfg.lower() in {"node", "nodesplitter", "true"}
+    ):
+        splitter = getattr(wds, "shardlists", None)
+        if splitter is not None and hasattr(splitter, "split_by_node"):
+            return splitter.split_by_node
+        if hasattr(wds, "split_by_node"):
+            return wds.split_by_node
+        return None
+    if isinstance(nodesplitter_cfg, str) and nodesplitter_cfg.lower() in {
+        "worker",
+        "split_by_worker",
+    }:
+        if hasattr(wds, "split_by_worker"):
+            return wds.split_by_worker
+        return None
+    return None
+
+
+def _apply_cache(dataset: Any, cache_dir: str | Path | None, wds: Any) -> Any:
+    """Attach a local shard/sample cache when supported by the installed webdataset."""
+    if cache_dir in (None, "", False):
+        return dataset
+    cache_path = Path(str(cache_dir)).expanduser()
+    cache_path.mkdir(parents=True, exist_ok=True)
+    logger.info("WebDataset cache directory: %s", cache_path)
+
+    # Prefer modern pipeline APIs when present.
+    if hasattr(dataset, "cache"):
+        try:
+            return dataset.cache(str(cache_path))
+        except TypeError:
+            try:
+                return dataset.cache(cache_path)
+            except Exception as exc:  # pragma: no cover - version dependent
+                logger.warning("dataset.cache() failed (%s); continuing without cache.", exc)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("dataset.cache() failed (%s); continuing without cache.", exc)
+
+    # Fallback: some versions expose cached pipelines via constructors only.
+    # We still create the directory so users / downstream tools can use it.
+    logger.info(
+        "Installed webdataset does not expose .cache(); cache_dir=%s was created "
+        "but not attached to the pipeline.",
+        cache_path,
+    )
+    return dataset
+
+
+def _build_transform(
+    task: str,
+    transform_cfg: Any,
+) -> Callable[[dict[str, Any]], dict[str, Any]] | None:
+    if transform_cfg in (None, False, {}):
+        return None
+    if callable(transform_cfg) and not isinstance(transform_cfg, type):
+        return transform_cfg  # type: ignore[return-value]
+
+    task_l = task.lower()
+    if task_l in {"reconstruction", "recon", "pretrain", "restore"}:
+        from stagerecon.data.transforms.transform_factory import (
+            build_reconstruction_transforms,
+        )
+
+        return build_reconstruction_transforms(transform_cfg)
+
+    from stagerecon.data.transforms.transform_factory import (
+        build_segmentation_transforms,
+    )
+
+    return build_segmentation_transforms(transform_cfg)
+
+
 def build_webdataset(cfg: Any) -> IterableDataset:
     """Build a WebDataset iterable dataset from config.
 
     Expected keys::
 
         shards / urls / shard_pattern: shard URL pattern(s)
+        split: optional train|val|test selector for split-specific shards
         task / mode: reconstruction | segmentation
-        shuffle_shards: bool (default True)
-        shard_shuffle: int buffer for shard shuffle (alias)
+        shuffle_shards / shard_shuffle: shard shuffle enable / buffer
         sample_shuffle / shuffle: sample shuffle buffer size (0 disables)
+        cache_dir: optional local cache directory for streamed shards
         nodesplitter: bool | "node" | "worker" (optional)
-        with_epoch: int optional epoch size
-        with_steps / steps: optional step count alternative to with_epoch
+        steps_per_epoch / with_epoch / with_steps: fixed epoch length
+        validation_steps / val_steps: used when split is val (as with_epoch)
         handler: "warn_and_continue" (default) | "reraise"
         transforms / transform: optional transform config
         length: optional __len__ hint for progress bars
         seed: optional RNG seed for deterministic shuffle
+        s3_transport / gs_transport / http_transport / rewrite_remote:
+            forwarded to :func:`build_shard_urls`
+        resampled / repeat: endlessly cycle shards (useful with steps_per_epoch)
 
     If ``webdataset`` is not installed, raises ``ImportError`` with an install hint.
 
@@ -124,27 +232,36 @@ def build_webdataset(cfg: Any) -> IterableDataset:
     wds = _require_webdataset()
     plain = _to_plain_dict(cfg)
 
-    urls = build_shard_urls(plain)
+    split = plain.get("split")
+    urls = build_shard_urls(plain, split=str(split) if split is not None else None)
+    logger.info(
+        "Building WebDataset with %d shard URL(s) (split=%s, task=%s)",
+        len(urls),
+        split,
+        plain.get("task", plain.get("mode", "segmentation")),
+    )
+    for preview in urls[:3]:
+        logger.info("  shard: %s", preview)
+    if len(urls) > 3:
+        logger.info("  ... (%d more)", len(urls) - 3)
+
     task = str(plain.get("task", plain.get("mode", "segmentation"))).lower()
     seed = plain.get("seed")
-
-    handler_name = str(plain.get("handler", "warn_and_continue")).lower()
-    if handler_name in {"warn_and_continue", "warn", "continue"}:
-        handler: Callable[[BaseException], bool] = warn_and_continue
-    elif handler_name in {"reraise", "raise", "strict"}:
-        from stagerecon.data.streaming.error_handlers import reraise
-
-        handler = reraise
-    elif callable(plain.get("handler")):
-        handler = plain["handler"]
-    else:
-        raise KeyError(f"Unknown handler '{handler_name}'")
+    handler = _resolve_handler(plain)
 
     # Shard shuffle
-    shuffle_shards = bool(plain.get("shuffle_shards", True))
-    shard_shuffle_buf = int(
-        plain.get("shard_shuffle", plain.get("shard_shuffle_buffer", 100))
+    shuffle_shards = bool(
+        plain.get("shuffle_shards", plain.get("shard_shuffle", True))
     )
+    # When shard_shuffle is an int, treat it as buffer size and enable shuffle.
+    shard_shuffle_raw = plain.get("shard_shuffle", plain.get("shard_shuffle_buffer", 100))
+    if isinstance(shard_shuffle_raw, bool):
+        shard_shuffle_buf = 100 if shard_shuffle_raw else 0
+        shuffle_shards = bool(shard_shuffle_raw)
+    else:
+        shard_shuffle_buf = int(shard_shuffle_raw)
+        if shard_shuffle_buf > 0:
+            shuffle_shards = True
 
     # Sample shuffle buffer
     sample_shuffle = int(
@@ -153,42 +270,49 @@ def build_webdataset(cfg: Any) -> IterableDataset:
             plain.get("shuffle_buffer", plain.get("shuffle", 0)),
         )
     )
+    # Boolean sample_shuffle in YAML means "enable with a default buffer".
+    if isinstance(plain.get("sample_shuffle"), bool):
+        sample_shuffle = 1000 if plain["sample_shuffle"] else 0
 
-    nodesplitter_cfg = plain.get("nodesplitter", plain.get("node_splitter"))
-    splitter = None
-    if nodesplitter_cfg is True or (
-        isinstance(nodesplitter_cfg, str)
-        and nodesplitter_cfg.lower() in {"node", "nodesplitter", "true"}
-    ):
-        splitter = getattr(wds, "shardlists", None)
-        if splitter is not None and hasattr(splitter, "split_by_node"):
-            splitter = splitter.split_by_node
-        elif hasattr(wds, "split_by_node"):
-            splitter = wds.split_by_node
-        else:
-            splitter = None
-    elif (
-        isinstance(nodesplitter_cfg, str)
-        and nodesplitter_cfg.lower() in {"worker", "split_by_worker"}
-    ):
-        if hasattr(wds, "split_by_worker"):
-            splitter = wds.split_by_worker
-        else:
-            splitter = None
-    elif callable(nodesplitter_cfg):
-        splitter = nodesplitter_cfg
-
-    # Build pipeline. Prefer WebDataset modern API, with fallbacks.
-    dataset = wds.WebDataset(
-        urls,
-        shardshuffle=shuffle_shards and shard_shuffle_buf > 0,
-        handler=handler,
-        nodesplitter=splitter,
+    splitter = _resolve_nodesplitter(
+        wds, plain.get("nodesplitter", plain.get("node_splitter"))
     )
 
-    if shuffle_shards and hasattr(dataset, "shuffle") and shard_shuffle_buf > 0:
-        # Some versions shuffle samples via .shuffle; shardshuffle covers shards.
-        pass
+    resampled = bool(plain.get("resampled", plain.get("repeat", False)))
+
+    dataset_kwargs: dict[str, Any] = {
+        "handler": handler,
+    }
+    # API differs across webdataset versions; pass only supported kwargs.
+    if splitter is not None:
+        dataset_kwargs["nodesplitter"] = splitter
+    if resampled:
+        dataset_kwargs["resampled"] = True
+
+    # shardshuffle: prefer int buffer size for modern webdataset versions.
+    shardshuffle_arg: int | bool
+    if shuffle_shards and shard_shuffle_buf > 0:
+        shardshuffle_arg = shard_shuffle_buf
+    else:
+        shardshuffle_arg = 0
+
+    try:
+        dataset = wds.WebDataset(
+            urls,
+            shardshuffle=shardshuffle_arg,
+            **dataset_kwargs,
+        )
+    except TypeError:
+        dataset_kwargs.pop("resampled", None)
+        dataset_kwargs.pop("nodesplitter", None)
+        try:
+            dataset = wds.WebDataset(urls, shardshuffle=bool(shardshuffle_arg), **dataset_kwargs)
+        except TypeError:
+            dataset = wds.WebDataset(urls, **dataset_kwargs)
+        if splitter is not None and hasattr(dataset, "nodesplitter"):
+            dataset = dataset.nodesplitter(splitter)
+
+    dataset = _apply_cache(dataset, plain.get("cache_dir"), wds)
 
     # Decode then map into task sample schema.
     dataset = dataset.map(decode_sample_fields, handler=handler)
@@ -203,42 +327,38 @@ def build_webdataset(cfg: Any) -> IterableDataset:
         else:
             dataset = dataset.shuffle(sample_shuffle)
 
-    # Optional transforms
-    transform_cfg = plain.get("transforms", plain.get("transform"))
-    transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None
-    if transform_cfg not in (None, False, {}):
-        if callable(transform_cfg) and not isinstance(transform_cfg, type):
-            transform = transform_cfg  # type: ignore[assignment]
-        elif task in {"reconstruction", "recon", "pretrain", "restore"}:
-            from stagerecon.data.transforms.transform_factory import (
-                build_reconstruction_transforms,
-            )
-
-            transform = build_reconstruction_transforms(transform_cfg)
-        else:
-            from stagerecon.data.transforms.transform_factory import (
-                build_segmentation_transforms,
-            )
-
-            transform = build_segmentation_transforms(transform_cfg)
-
+    transform = _build_transform(
+        task, plain.get("transforms", plain.get("transform"))
+    )
     if transform is not None:
         dataset = dataset.map(transform, handler=handler)
 
+    # Epoch length: prefer explicit with_epoch, then steps_per_epoch / val_steps.
     with_epoch = plain.get("with_epoch", plain.get("epoch_size"))
     with_steps = plain.get("with_steps", plain.get("steps"))
-    if with_epoch is not None:
-        dataset = dataset.with_epoch(int(with_epoch))
-    elif with_steps is not None:
-        # Prefer with_epoch when available; otherwise approximate via slice.
-        if hasattr(dataset, "with_epoch"):
-            dataset = dataset.with_epoch(int(with_steps))
-        elif hasattr(dataset, "slice"):
-            dataset = dataset.slice(int(with_steps))
+    steps_per_epoch = plain.get("steps_per_epoch")
+    val_steps = plain.get("val_steps", plain.get("validation_steps"))
 
-    length = plain.get("length", with_epoch if with_epoch is not None else with_steps)
+    if with_epoch is None:
+        split_l = str(split or "").lower()
+        if split_l in {"val", "validation", "valid", "test"} and val_steps is not None:
+            with_epoch = val_steps
+        elif steps_per_epoch is not None:
+            with_epoch = steps_per_epoch
+        elif with_steps is not None:
+            with_epoch = with_steps
+
+    if with_epoch is not None:
+        if hasattr(dataset, "with_epoch"):
+            dataset = dataset.with_epoch(int(with_epoch))
+        elif hasattr(dataset, "slice"):
+            dataset = dataset.slice(int(with_epoch))
+
+    length = plain.get("length", with_epoch)
     if not isinstance(dataset, IterableDataset):
-        dataset = _MappedIterableDataset(dataset, length=length if length is not None else None)
+        dataset = _MappedIterableDataset(
+            dataset, length=int(length) if length is not None else None
+        )
     elif length is not None and not hasattr(dataset, "__len__"):
         dataset = _MappedIterableDataset(dataset, length=int(length))
 

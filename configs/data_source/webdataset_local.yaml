@@ -1,11 +1,41 @@
 type: webdataset
-# User must set local shard paths/patterns, e.g.:
-#   data_source.shards=/data/shards/train-{000000..000009}.tar
+# Local TAR shard streaming.
+# Override shards when launching, e.g.:
+#   data_source=webdataset_local \
+#   data_source.shards=/data/shards/train/train-{000000..000009}.tar
+#
+# Split-specific patterns are also supported:
+#   data_source.shards.train=/data/shards/train/train-{000000..000009}.tar
+#   data_source.shards.val=/data/shards/val/val-{000000..000001}.tar
+#   data_source.shards.test=/data/shards/test/test-{000000..000001}.tar
+
+name: webdataset
 shards: null
+
 batch_size: 4
 num_workers: 2
+pin_memory: false
+drop_last: false
+
+# Shuffle
 shard_shuffle: true
 sample_shuffle: 1000
+
+# Optional local cache for repeated epoch reads
 cache_dir: null
+
+# Fixed epoch lengths so training does not rely on len(dataset)
 steps_per_epoch: 100
 val_steps: 20
+
+# Error handling: warn_and_continue | reraise
+handler: warn_and_continue
+
+# Keep cycling shards when steps_per_epoch exceeds one pass
+resampled: true
+
+# Transport (local paths need no rewrite)
+rewrite_remote: true
+s3_transport: pipe_aws
+gs_transport: pipe_gsutil
+http_transport: raw

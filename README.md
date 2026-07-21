@@ -168,9 +168,26 @@ PYTHONPATH=src python scripts/train_segmentation.py \
 
 在实验 YAML 的 `stages.downstream` 中组合这些策略字段。
 
-## WebDataset 数据格式
+## WebDataset 流式读取
 
-每个样本建议键：
+实现目录：`src/stagerecon/data/streaming/`
+
+| 文件 | 职责 |
+|------|------|
+| `shard_url_builder.py` | brace 展开；`s3://` / `gs://` / HTTP / `pipe:` 规范化 |
+| `sample_decoders.py` | `.npy` / `.json` 解码为 tensor + metadata |
+| `webdataset_factory.py` | 构建可迭代数据集（shuffle / cache / steps_per_epoch） |
+| `error_handlers.py` | `warn_and_continue` / `reraise` |
+
+配置目录：`configs/data_source/`
+
+- `webdataset_local.yaml` — 本地 TAR  
+- `webdataset_s3.yaml` — S3（默认改写为 `pipe:aws s3 cp ... -`）  
+- `webdataset_http.yaml` — HTTP(S)  
+
+Hydra 会把 `data`（语义）与 `data_source`（传输）合并：当 `data_source.type` 为 webdataset 时，自动路由到流式工厂，**不依赖** `len(dataset)`，用 `steps_per_epoch` / `val_steps` 控制 epoch 长度。
+
+### 样本格式
 
 ```text
 __key__
@@ -178,8 +195,6 @@ image.npy
 mask.npy          # 分割任务；重建预训练可省略
 meta.json
 ```
-
-`meta.json` 示例：
 
 ```json
 {"sample_id": "case_0001", "split": "train"}
@@ -190,49 +205,60 @@ meta.json
 从 manifest CSV（列：`sample_id,image_path,mask_path,split`）生成：
 
 ```bash
-PYTHONPATH=src python scripts/create_webdataset_shards.py \
+PYTHONPATH=src python3 scripts/create_webdataset_shards.py \
   --manifest path/to/manifest.csv \
   --output-dir path/to/shards \
   --maxcount 1000 \
-  --maxsize 1e9 \
-  --write-sha256
+  --maxsize 1000000000 \
+  --sha256
 ```
 
-工具会：
-
-- 按 `train` / `val` / `test` 独立写 shard（禁止混写）  
-- 检查 `__key__` 唯一性  
-- 写出 `summary.json`（可选 SHA-256）
-
-当前完整支持 `.npy` 输入；NIfTI / DICOM 为可选依赖，未默认启用。
+工具会：按 split 分目录写 shard（禁止混写）、检查 key 唯一性、写出 `summary.json`（可选 SHA-256）。当前完整支持 `.npy` 输入。
 
 ### 本地 shard
 
-```yaml
-# configs/data_source/webdataset_local.yaml
-type: webdataset
-shards: /data/shards/train/shard-{000000..000009}.tar
-batch_size: 4
-shard_shuffle: true
-sample_shuffle: 1000
-steps_per_epoch: 100
-```
-
 ```bash
-PYTHONPATH=src python scripts/pretrain_stage1.py \
+PYTHONPATH=src python3 scripts/pretrain_stage1.py \
   --config-name experiments/staged_pretrain \
   data_source=webdataset_local \
-  data_source.shards=/data/shards/train/shard-{000000..000009}.tar
+  'data_source.shards.train=/data/shards/train/train-{000000..000009}.tar' \
+  'data_source.shards.val=/data/shards/val/val-{000000..000001}.tar' \
+  data_source.cache_dir=/tmp/stagerecon_wds_cache \
+  data_source.steps_per_epoch=100 \
+  data_source.val_steps=20
 ```
 
 ### S3 shard
 
-```yaml
-# configs/data_source/webdataset_s3.yaml
-shards: pipe:aws s3 cp s3://BUCKET/shards/train/shard-{000000..000009}.tar -
+```bash
+# 推荐：写 s3://，框架默认改写为 pipe:aws s3 cp ... -
+export AWS_PROFILE=your-profile
+PYTHONPATH=src python3 scripts/pretrain_stage1.py \
+  --config-name experiments/staged_pretrain \
+  data_source=webdataset_s3 \
+  'data_source.shards=s3://BUCKET/shards/train/train-{000000..000009}.tar' \
+  data_source.s3_transport=pipe_aws \
+  data_source.cache_dir=/tmp/stagerecon_wds_cache
 ```
 
-**不要**把云密钥写进仓库或配置文件；使用环境变量 / IAM 角色 / `aws` CLI 配置。
+也可用显式 pipe（不再二次改写）：
+
+```bash
+'data_source.shards=pipe:aws s3 cp s3://BUCKET/shards/train/train-000000.tar -'
+```
+
+可选：`data_source.s3_transport=pipe_rclone` 或 `raw`（需自定义 gopen handler）。
+
+**不要**把云密钥写进仓库或 YAML；使用环境变量 / IAM 角色 / `aws` CLI 配置。
+
+### HTTP shard
+
+```bash
+PYTHONPATH=src python3 scripts/pretrain_stage1.py \
+  --config-name experiments/staged_pretrain \
+  data_source=webdataset_http \
+  'data_source.shards=https://example.com/shards/train-{000000..000009}.tar'
+```
 
 ## 如何新增 Encoder
 

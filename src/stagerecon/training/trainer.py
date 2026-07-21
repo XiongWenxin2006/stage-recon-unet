@@ -123,6 +123,9 @@ class Trainer:
         self.steps_per_epoch = train_cfg.get("steps_per_epoch")
         if self.steps_per_epoch is not None:
             self.steps_per_epoch = int(self.steps_per_epoch)
+        self.val_steps = train_cfg.get("val_steps", train_cfg.get("validation_steps"))
+        if self.val_steps is not None:
+            self.val_steps = int(self.val_steps)
 
         save_dir = (
             train_cfg.get("save_dir")
@@ -307,7 +310,8 @@ class Trainer:
         n_steps = 0
 
         for step, batch in enumerate(self.val_loader, start=1):
-            if self.steps_per_epoch is not None and step > self.steps_per_epoch:
+            limit = self.val_steps if self.val_steps is not None else self.steps_per_epoch
+            if limit is not None and step > limit:
                 break
             batch = _move_batch_to_device(batch, self.device)
             with self._autocast():
